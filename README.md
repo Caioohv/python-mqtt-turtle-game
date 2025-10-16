@@ -15,6 +15,8 @@ O jogo (partida iniciada) continua com a comunicação baseada em objetos. O jog
 ```sh
 sudo apt update
 
+sudo apt install python3-rpyc python3-paho-mqtt
+
 for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
 
 # Add Docker's official GPG key:

@@ -2,6 +2,7 @@ import turtle
 import time
 import random
 import rpyc
+import paho.mqtt.client as mqtt
 
 delay = 0.1
 
@@ -106,19 +107,16 @@ def atualiza_jogo(id):
             todos[j]['turtle'].goto(todos[j]['x'], todos[j]['y'])
 
 # Main game loop
-
-
-
 proxy = rpyc.connect('localhost', 18861, config={'allow_public_attrs': True})
 
-id = criar_jogador()
+def executarJogo(): 
+    id = criar_jogador()
+    while True:
+        atualiza_jogo(id)  
+        wn.update()
+        move()
+        atualizar_posicao(id)
+        time.sleep(delay)
+    wn.mainloop()
 
-while True:
-    atualiza_jogo(id)  
-    wn.update()
-    move()
-    atualizar_posicao(id)
-    time.sleep(delay)
 
-
-wn.mainloop()
