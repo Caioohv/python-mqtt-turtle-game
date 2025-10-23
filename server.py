@@ -4,15 +4,14 @@ import json
 import threading
 import os
 
-# Estado do servidor
 listaJogadores = {}
 idJogador = 0
 _lock = threading.Lock()
+mqtt_client = None 
 
 
 class MeuServico(rpyc.Service):
     def exposed_obter_estado(self):
-        # Retorna cópia para evitar race conditions
         with _lock:
             return dict(listaJogadores)
 
@@ -53,7 +52,6 @@ class MeuServico(rpyc.Service):
 
 
 def _start_rpc_server_in_thread(host="0.0.0.0", port=18861):
-    """Inicia o servidor RPC em uma thread separada para não bloquear o loop MQTT."""
     def _run():
         from rpyc.utils.server import ThreadedServer
         t = ThreadedServer(MeuServico, hostname=host, port=port)
@@ -66,7 +64,6 @@ def _start_rpc_server_in_thread(host="0.0.0.0", port=18861):
 
 
 def _handle_init(payload):
-    """Trata evento init. Espera um JSON com {'id': <num>} ou um número simples."""
     global idJogador
     try:
         data = json.loads(payload)
@@ -76,11 +73,9 @@ def _handle_init(payload):
             print(f"inicializado idJogador = {idJogador}")
             return
     except Exception:
-        # payload pode ser apenas um número
         pass
 
     try:
-        # tentar interpretar como inteiro direto
         with _lock:
             idJogador = int(payload)
         print(f"inicializado idJogador = {idJogador}")
@@ -89,7 +84,6 @@ def _handle_init(payload):
 
 
 def _handle_join(payload):
-    """Adiciona jogador. Espera JSON: {'id': <num>, 'color': <str>, 'x': <num>, 'y': <num>}"""
     try:
         data = json.loads(payload)
         pid = int(data.get('id'))
@@ -99,12 +93,17 @@ def _handle_join(payload):
         with _lock:
             listaJogadores[pid] = {'id': pid, 'color': color, 'x': x, 'y': y}
         print('join -> adicionou jogador', pid)
+        
+        if len(listaJogadores) == 3:
+            global mqtt_client
+            if mqtt_client:
+                _emit_start_game(mqtt_client)
+                
     except Exception as e:
         print('erro ao processar join payload:', payload, 'erro:', e)
 
 
 def _handle_left(payload):
-    """Remove jogador. Espera JSON {'id': <num>} ou número simples."""
     try:
         data = json.loads(payload)
         pid = int(data.get('id'))
@@ -122,29 +121,26 @@ def _handle_left(payload):
             print('left -> jogador não encontrado', pid)
 
 
-def _handle_start(payload):
-    """Inicia o servidor RPC. Payload pode conter host/port opcional em JSON."""
-    host = "0.0.0.0"
-    port = 18861
-    try:
-        data = json.loads(payload)
-        if isinstance(data, dict):
-            host = data.get('host', host)
-            port = int(data.get('port', port))
-    except Exception:
-        # não-JSON é esperado, ignorar
-        pass
-    print('recebido start -> iniciando RPC server...')
-    _start_rpc_server_in_thread(host=host, port=port)
+def _emit_start_game(client):
+    """Emite mensagem de start quando há 3 jogadores"""
+    start_data = {
+        'host': '127.0.0.1',
+        'port': 18861,
+        'players': len(listaJogadores)
+    }
+    message = json.dumps(start_data)
+    client.publish('game/start', message)
+    print(f'Emitindo game/start -> {len(listaJogadores)} jogadores prontos')
+    _start_rpc_server_in_thread(host=start_data['host'], port=start_data['port'])
 
 
 def on_connect(client, userdata, flags, rc):
+    global mqtt_client
+    mqtt_client = client
     print("MQTT conectado com código", rc)
-    # Subscribes a tópicos de interesse
     client.subscribe("game/init")
     client.subscribe("game/join")
     client.subscribe("game/left")
-    client.subscribe("game/start")
 
 
 def on_message(client, userdata, msg):
@@ -157,8 +153,6 @@ def on_message(client, userdata, msg):
         _handle_join(payload)
     elif topic == 'game/left':
         _handle_left(payload)
-    elif topic == 'game/start':
-        _handle_start(payload)
     else:
         print('Tópico não tratado:', topic)
 
@@ -171,16 +165,13 @@ def start_mqtt_loop(broker_host=None, broker_port=None):
     client.on_message = on_message
     client.connect(broker_host, broker_port, 60)
     print(f'Conectado ao broker MQTT {broker_host}:{broker_port}, aguardando eventos...')
-    # Loop bloqueante (pode ser trocado por loop_start() se preferir não bloquear)
     client.loop_forever()
 
 
-if __name__ == '__main__':
-    # Inicia loop MQTT (irá escutar eventos e iniciar o RPC quando receber 'start')
-    try:
-        start_mqtt_loop()
-    except KeyboardInterrupt:
-        print('Encerrando servidor MQTT')
+try:
+    start_mqtt_loop()
+except KeyboardInterrupt:
+    print('Encerrando servidor MQTT')
 
 
 
