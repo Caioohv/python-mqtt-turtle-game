@@ -1,8 +1,10 @@
 import rpyc
 
+import paho.mqtt.client as mqtt
+
 listaJogadores = {}
 idJogador = 0
-
+jogo_iniciado = False
 class MeuServico(rpyc.Service):
     def exposed_obter_estado(self):
         return listaJogadores
@@ -41,3 +43,42 @@ class MeuServico(rpyc.Service):
 from rpyc.utils.server import ThreadedServer
 t = ThreadedServer(MeuServico, port=18861)
 t.start()
+
+
+broker="localhost"
+port=1883
+global joined
+joined = 0
+
+def on_message(client, userdata, msg):
+    global jogo_iniciado
+    global joined 
+    print(msg.payload.decode())
+    if msg.payload.decode() == "joined":
+        joined += 1
+        if(joined >= 3 and not jogo_iniciado):
+            jogo_iniciado = True
+            client.publish("/start", "start")
+        print("Um jogador se juntou ao jogo.", joined, " jogadores no total.")
+    if msg.payload.decode() == "left":
+        joined -= 1
+        print("Um jogador saiu do jogo.", joined, " jogadores no total.")
+
+def on_connect(client, userdata, flags, rc):
+    print("Connected with result code "+str(rc))
+    client.subscribe("/joined")
+    client.subscribe("/left")
+
+def on_publish(client, userdata, mid):
+    print("Dados Publicados.")
+
+global players
+players = 0
+
+client = mqtt.Client("admin")
+client.on_publish = on_publish
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.connect(broker, port)
+client.loop_forever()
