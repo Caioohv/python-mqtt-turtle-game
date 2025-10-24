@@ -13,7 +13,17 @@ mqtt_client = None
 class MeuServico(rpyc.Service):
     def exposed_obter_estado(self):
         with _lock:
-            return dict(listaJogadores)
+            # Retorna uma lista de jogadores para evitar problemas com keys()
+            jogadores_list = []
+            for jid, jogador in listaJogadores.items():
+                jogadores_list.append({
+                    'id': jogador['id'],
+                    'color': jogador['color'],
+                    'x': jogador['x'],
+                    'y': jogador['y']
+                })
+            print(f'[RPC] obter_estado chamado - {len(jogadores_list)} jogadores: {[j["id"] for j in jogadores_list]}')
+            return jogadores_list
 
     def exposed_obter_id(self):
         global idJogador
@@ -22,16 +32,20 @@ class MeuServico(rpyc.Service):
             return idJogador
 
     def exposed_criar_jogador(self, player_id, color, x, y):
-        jogador = {
-            'id': player_id,
-            'color': color,
-            'x': x,
-            'y': y
-        }
         with _lock:
-            print('criando jogador ', player_id)
-            listaJogadores[player_id] = jogador
-        return True
+            if player_id not in listaJogadores:
+                jogador = {
+                    'id': player_id,
+                    'color': color,
+                    'x': x,
+                    'y': y
+                }
+                print('criando jogador ', player_id)
+                listaJogadores[player_id] = jogador
+                return True
+            else:
+                print('jogador já existe:', player_id)
+                return False
 
     def exposed_remover_jogador(self, player_id):
         with _lock:
@@ -123,15 +137,24 @@ def _handle_left(payload):
 
 def _emit_start_game(client):
     """Emite mensagem de start quando há 3 jogadores"""
+    with _lock:
+        jogadores_count = len(listaJogadores)
+        jogadores_ids = list(listaJogadores.keys())
+    
+    print(f'=== INICIANDO JOGO ===')
+    print(f'Jogadores na lista: {jogadores_count}')
+    print(f'IDs: {jogadores_ids}')
+    
     start_data = {
         'host': '127.0.0.1',
         'port': 18861,
-        'players': len(listaJogadores)
+        'players': jogadores_count
     }
     message = json.dumps(start_data)
     client.publish('game/start', message)
-    print(f'Emitindo game/start -> {len(listaJogadores)} jogadores prontos')
+    print(f'Emitindo game/start -> {jogadores_count} jogadores prontos')
     _start_rpc_server_in_thread(host=start_data['host'], port=start_data['port'])
+    print(f'=== SERVIDOR RPC INICIADO ===')
 
 
 def on_connect(client, userdata, flags, rc):
