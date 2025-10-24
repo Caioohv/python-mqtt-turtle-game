@@ -7,7 +7,6 @@ import os
 import rpyc
 import threading
 
-# Estados do jogo
 searching = False
 game_started = False
 mqtt_client = None
@@ -15,15 +14,14 @@ player_id = None
 proxy = None
 delay = 0.1
 
-# Variáveis do jogo
 player_turtle = None
 direction = "stop"
 posX = 0
 posY = 0
 velocidade = 5
 screen = None
-other_players_turtles = {}  # Dicionário para manter turtles dos outros jogadores
-debug_frame_count = 0  # Contador para debug
+other_players_turtles = {}
+debug_frame_count = 0
 BUTTON_LEFT = -100
 BUTTON_RIGHT = 100
 BUTTON_BOTTOM = -25
@@ -34,7 +32,6 @@ BUTTON_TEXT_CANCELAR = "Cancelar busca"
 
 
 def generate_player_data():
-	"""Gera dados do jogador (ID, cor e posição inicial)"""
 	global player_id
 	if player_id is None:
 		player_id = random.randint(1, 10000)
@@ -77,7 +74,6 @@ def on_mqtt_message(client, userdata, msg):
 
 
 def setup_mqtt():
-	"""Configura e conecta ao broker MQTT"""
 	global mqtt_client
 	broker_host = os.environ.get('MQTT_BROKER', 'localhost')
 	broker_port = int(os.environ.get('MQTT_PORT', '1883'))
@@ -88,7 +84,7 @@ def setup_mqtt():
 	
 	try:
 		mqtt_client.connect(broker_host, broker_port, 60)
-		mqtt_client.loop_start()  # Inicia loop em thread separada
+		mqtt_client.loop_start()
 		print(f'Conectado ao broker MQTT {broker_host}:{broker_port}')
 		return True
 	except Exception as e:
@@ -97,7 +93,6 @@ def setup_mqtt():
 
 
 def emit_join():
-	"""Emite evento de join para entrar na partida"""
 	if mqtt_client:
 		player_data = generate_player_data()
 		message = json.dumps(player_data)
@@ -106,7 +101,6 @@ def emit_join():
 
 
 def emit_left():
-	"""Emite evento de left para sair da partida"""
 	if mqtt_client and player_id:
 		message = json.dumps({'id': player_id})
 		mqtt_client.publish('game/left', message)
@@ -137,7 +131,6 @@ def draw_button(pen):
 
 def on_screen_click(x, y):
 	global searching
-	# Só permite cliques se o jogo não começou ainda
 	if game_started:
 		return
 		
@@ -145,10 +138,8 @@ def on_screen_click(x, y):
 		searching = not searching
 		
 		if searching:
-			# Clicou em "Procurar partida" - emite join
 			emit_join()
 		else:
-			# Clicou em "Cancelar busca" - emite left
 			emit_left()
 			
 		draw_button(_button_pen)
@@ -167,35 +158,27 @@ def setup_screen():
 
 
 def start_game(host, port):
-	"""Inicia o jogo conectando ao servidor RPC"""
 	global game_started, proxy, player_turtle, screen, posX, posY
 	
 	try:
-		# Conecta ao servidor RPC
 		proxy = rpyc.connect(host, port, config={'allow_public_attrs': True})
 		print(f"Conectado ao servidor RPC em {host}:{port}")
 		
-		# Aguarda um momento para sincronização
 		time.sleep(0.5)
 		
-		# Verifica estado do servidor - agora retorna uma lista
 		jogadores_list = proxy.root.exposed_obter_estado()
 		
 		print(f"Estado do servidor ao conectar: {len(jogadores_list)} jogadores")
 		for jogador in jogadores_list:
 			print(f"  Jogador {jogador['id']}: cor={jogador['color']}, pos=({jogador['x']}, {jogador['y']})")
 		
-		# Marca que o jogo começou
 		game_started = True
 		
-		# Configura a tela do jogo
 		setup_game_screen()
 		
-		# Usa o mesmo ID do MQTT (jogador já foi criado via join)
 		game_player_id = player_id
 		print(f"Usando ID do jogador: {game_player_id}")
 		
-		# Inicia o loop do jogo em thread separada
 		game_thread = threading.Thread(target=game_loop, args=(game_player_id,), daemon=True)
 		game_thread.start()
 		
@@ -207,28 +190,22 @@ def start_game(host, port):
 
 
 def setup_game_screen():
-	"""Configura a tela para o jogo"""
 	global screen, player_turtle, posX, posY
 	
-	# Limpa a tela anterior
 	screen.clear()
 	
-	# Reconfigura a tela para o jogo
 	screen.title("Jogo Multiplayer - Em andamento")
 	screen.bgcolor("green")
 	screen.setup(width=800, height=600)
 	screen.tracer(0)
 	
-	# Obtém dados do jogador atual que já foram enviados no join
 	player_data = None
 	if proxy:
 		try:
-			# Acessa estado - agora retorna uma lista
 			jogadores_list = proxy.root.exposed_obter_estado()
 			
 			print(f"Estado atual do servidor: {len(jogadores_list)} jogadores")
 			
-			# Busca o jogador atual na lista
 			player_data = None
 			for jogador in jogadores_list:
 				if jogador['id'] == player_id:
@@ -240,7 +217,6 @@ def setup_game_screen():
 			
 			if not player_data:
 				print(f"Jogador {player_id} NÃO encontrado no servidor")
-				# Usa dados do generate_player_data que foram enviados no join
 				player_data = generate_player_data()
 				posX = player_data['x']
 				posY = player_data['y']
@@ -248,7 +224,6 @@ def setup_game_screen():
 			print(f"Erro ao acessar servidor: {e}")
 			import traceback
 			traceback.print_exc()
-			# Fallback se não conseguir acessar o servidor
 			player_data = generate_player_data()
 			posX = player_data['x']
 			posY = player_data['y']
@@ -257,7 +232,6 @@ def setup_game_screen():
 		posX = player_data['x']
 		posY = player_data['y']
 	
-	# Cria a turtle do jogador atual
 	player_turtle = turtle.Turtle()
 	player_turtle.speed(0)
 	player_turtle.shape("circle")
@@ -266,12 +240,10 @@ def setup_game_screen():
 	player_turtle.goto(posX, posY)
 	print(f"Turtle do jogador atual criada: ID {player_id}, cor {player_data['color']}")
 	
-	# Configura controles
 	setup_controls()
 
 
 def setup_controls():
-	"""Configura os controles do jogo"""
 	screen.listen()
 	screen.onkeypress(go_up, "w")
 	screen.onkeypress(go_down, "s")
@@ -308,7 +280,6 @@ def close_game():
 
 
 def move():
-	"""Move o jogador baseado na direção"""
 	global posX, posY, player_turtle
 	
 	if direction == "up":
@@ -326,13 +297,10 @@ def move():
 
 
 def criar_jogador_jogo():
-	"""Cria jogador no servidor RPC para o jogo usando o mesmo ID do MQTT"""
 	if proxy and player_id:
 		try:
-			# Verifica se o jogador já existe (veio do MQTT join)
 			jogadores_list = proxy.root.exposed_obter_estado()
 			
-			# Verifica se o ID já existe na lista
 			jogador_existe = False
 			for jogador in jogadores_list:
 				if jogador['id'] == player_id:
@@ -343,7 +311,6 @@ def criar_jogador_jogo():
 				print(f"Jogador {player_id} já existe no servidor RPC")
 				return player_id
 			else:
-				# Se não existe, cria com os dados do MQTT
 				player_data = generate_player_data()
 				proxy.root.exposed_criar_jogador(player_id, player_data['color'], posX, posY)
 				print(f"Jogador criado no RPC com ID: {player_id}")
@@ -356,23 +323,19 @@ def criar_jogador_jogo():
 
 
 def atualizar_posicao_jogo(game_id):
-	"""Atualiza posição do jogador no servidor"""
 	if proxy and game_id:
 		proxy.root.exposed_atualizar_posicao(game_id, posX, posY)
 
 
 def atualizar_outros_jogadores(game_id):
-	"""Atualiza posição de TODOS os jogadores na tela, incluindo outros jogadores"""
 	global other_players_turtles, debug_frame_count
 	
 	if not proxy:
 		return
 		
 	try:
-		# Obtém lista de jogadores do servidor
 		jogadores_list = proxy.root.exposed_obter_estado()
 		
-		# Debug apenas nos primeiros 10 frames
 		show_debug = debug_frame_count < 10
 		
 		if show_debug:
@@ -381,18 +344,14 @@ def atualizar_outros_jogadores(game_id):
 			print(f"[DEBUG] Meu ID: {game_id}")
 			print(f"[DEBUG] Turtles criadas: {list(other_players_turtles.keys())}")
 		
-		# Itera sobre todos os jogadores
 		for jogador in jogadores_list:
 			jogador_id = jogador['id']
 			
 			if show_debug:
 				print(f"[DEBUG] Processando jogador {jogador_id}, é outro jogador: {jogador_id != game_id}")
 			
-			# Para outros jogadores (não o atual), cria/atualiza turtle
 			if jogador_id != game_id:
-				# Verifica se já temos uma turtle para este jogador
 				if jogador_id not in other_players_turtles:
-					# Cria nova turtle para este jogador
 					t = turtle.Turtle()
 					t.speed(0)
 					t.shape("circle")
@@ -402,7 +361,6 @@ def atualizar_outros_jogadores(game_id):
 					other_players_turtles[jogador_id] = t
 					print(f"✅ Criada turtle para jogador {jogador_id} cor {jogador['color']} pos({jogador['x']}, {jogador['y']})")
 				else:
-					# Atualiza posição usando a turtle armazenada
 					other_players_turtles[jogador_id].goto(jogador['x'], jogador['y'])
 		
 		debug_frame_count += 1
@@ -414,7 +372,6 @@ def atualizar_outros_jogadores(game_id):
 
 
 def game_loop(game_id):
-	"""Loop principal do jogo"""
 	global game_started
 	
 	print(f"Iniciando game loop para jogador {game_id}")
@@ -422,24 +379,18 @@ def game_loop(game_id):
 	
 	while game_started:
 		try:
-			# Atualiza posição dos outros jogadores primeiro
 			atualizar_outros_jogadores(game_id)
 			
-			# Atualiza a tela
 			screen.update()
 			
-			# Move o jogador atual
 			move()
 			
-			# Atualiza posição do jogador atual no servidor
 			atualizar_posicao_jogo(game_id)
 			
-			# Log periódico (a cada 50 frames)
 			frame_count += 1
 			if frame_count % 50 == 0:
 				print(f"[LOOP] Frame {frame_count}, Turtles visíveis: {len(other_players_turtles) + 1}")
 			
-			# Pausa
 			time.sleep(delay)
 		except Exception as e:
 			print(f"Erro no loop do jogo: {e}")
@@ -453,7 +404,6 @@ def game_loop(game_id):
 
 screen, _button_pen = setup_screen()
 
-# Configurar MQTT antes de desenhar o botão
 if setup_mqtt():
 	print("MQTT configurado com sucesso")
 else:

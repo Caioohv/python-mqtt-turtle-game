@@ -13,7 +13,6 @@ mqtt_client = None
 class MeuServico(rpyc.Service):
     def exposed_obter_estado(self):
         with _lock:
-            # Retorna uma lista de jogadores para evitar problemas com keys()
             jogadores_list = []
             for jid, jogador in listaJogadores.items():
                 jogadores_list.append({
@@ -136,7 +135,6 @@ def _handle_left(payload):
 
 
 def _emit_start_game(client):
-    """Emite mensagem de start quando há 3 jogadores"""
     with _lock:
         jogadores_count = len(listaJogadores)
         jogadores_ids = list(listaJogadores.keys())
