@@ -5,6 +5,9 @@ import threading
 import os
 
 listaJogadores = {}
+listaJogadoresAceitaram = set()
+jogadoresNaPartida = set()  # IDs dos jogadores que estão na partida atual
+match_found = False
 idJogador = 0
 _lock = threading.Lock()
 mqtt_client = None 
@@ -107,10 +110,11 @@ def _handle_join(payload):
             listaJogadores[pid] = {'id': pid, 'color': color, 'x': x, 'y': y}
         print('join -> adicionou jogador', pid)
         
-        if len(listaJogadores) == 3:
-            global mqtt_client
-            if mqtt_client:
-                _emit_start_game(mqtt_client)
+        # Só criar partida se ainda não há uma em andamento
+        if len(listaJogadores) >= 3:
+            global mqtt_client, match_found
+            if mqtt_client and not match_found:
+                _emit_match_found(mqtt_client)
                 
     except Exception as e:
         print('erro ao processar join payload:', payload, 'erro:', e)
@@ -127,20 +131,110 @@ def _handle_left(payload):
             print('payload left inválido:', payload, 'erro:', e)
             return
     with _lock:
+        global match_found
         if pid in listaJogadores:
             del listaJogadores[pid]
             print('left -> removeu jogador', pid)
+            # Se a partida foi encontrada e alguém que estava na partida saiu, cancelar
+            if match_found and pid in jogadoresNaPartida:
+                match_found = False
+                listaJogadoresAceitaram.clear()
+                jogadoresNaPartida.clear()
+                if mqtt_client:
+                    mqtt_client.publish('game/match_cancelled', json.dumps({}))
+                    print('Partida cancelada - jogador da partida saiu')
         else:
             print('left -> jogador não encontrado', pid)
+        
+        # Remover das listas de aceitação e partida
+        if pid in listaJogadoresAceitaram:
+            listaJogadoresAceitaram.discard(pid)
+        if pid in jogadoresNaPartida:
+            jogadoresNaPartida.discard(pid)
+
+
+def _emit_match_found(client):
+    global match_found, jogadoresNaPartida
+    with _lock:
+        match_found = True
+        # Pegar apenas os primeiros 3 jogadores para a partida
+        jogadores_ids = list(listaJogadores.keys())[:3]
+        jogadoresNaPartida = set(jogadores_ids)
+        jogadores_count = len(jogadores_ids)
+    
+    print(f'=== PARTIDA ENCONTRADA ===')
+    print(f'Jogadores na partida: {jogadores_count}')
+    print(f'IDs: {jogadores_ids}')
+    
+    match_data = {
+        'total_players': jogadores_count,
+        'players_in_match': jogadores_ids  # IDs específicos dos jogadores na partida
+    }
+    message = json.dumps(match_data)
+    client.publish('game/match_found', message)
+    print(f'Emitindo game/match_found -> {jogadores_count} jogadores: {jogadores_ids}')
+
+
+def _handle_accept(payload):
+    try:
+        data = json.loads(payload)
+        pid = int(data.get('id'))
+        
+        print(f'[DEBUG] Recebido accept de jogador {pid}')
+        print(f'[DEBUG] jogadoresNaPartida: {jogadoresNaPartida}')
+        print(f'[DEBUG] listaJogadoresAceitaram antes: {listaJogadoresAceitaram}')
+        
+        with _lock:
+            # Só aceitar se o jogador está na partida atual
+            if pid in jogadoresNaPartida and pid not in listaJogadoresAceitaram:
+                listaJogadoresAceitaram.add(pid)
+                aceitos = len(listaJogadoresAceitaram)
+                total = len(jogadoresNaPartida)  # Total é o número de jogadores NA PARTIDA
+                print(f'accept -> jogador {pid} aceitou ({aceitos}/{total})')
+                print(f'[DEBUG] listaJogadoresAceitaram depois: {listaJogadoresAceitaram}')
+                print(f'[DEBUG] Todos aceitaram? {aceitos == total}')
+                
+        # Notificar todos sobre a aceitação FORA do lock
+        global mqtt_client
+        if mqtt_client:
+            with _lock:
+                aceitos = len(listaJogadoresAceitaram)
+                total = len(jogadoresNaPartida)
+                todos_aceitaram = (aceitos == total and aceitos > 0)
+                
+            accept_data = {
+                'accepted': aceitos,
+                'total': total
+            }
+            mqtt_client.publish('game/accept_update', json.dumps(accept_data))
+            print(f'Emitindo game/accept_update -> {aceitos}/{total}')
+            
+            # Se todos os jogadores DA PARTIDA aceitaram, iniciar o jogo
+            if todos_aceitaram:
+                print(f'[DEBUG] Todos os {total} jogadores aceitaram! Iniciando jogo...')
+                _emit_start_game(mqtt_client)
+        
+        if pid not in jogadoresNaPartida:
+            print(f'accept -> jogador {pid} não está na partida atual (ignorado)')
+                        
+    except Exception as e:
+        print('erro ao processar accept payload:', payload, 'erro:', e)
+        import traceback
+        traceback.print_exc()
 
 
 def _emit_start_game(client):
+    global match_found, listaJogadoresAceitaram, jogadoresNaPartida
+    
+    print(f'[DEBUG] _emit_start_game chamado!')
+    
     with _lock:
-        jogadores_count = len(listaJogadores)
-        jogadores_ids = list(listaJogadores.keys())
+        # Usar apenas os jogadores que estão na partida
+        jogadores_ids = list(jogadoresNaPartida)
+        jogadores_count = len(jogadores_ids)
     
     print(f'=== INICIANDO JOGO ===')
-    print(f'Jogadores na lista: {jogadores_count}')
+    print(f'Jogadores na partida: {jogadores_count}')
     print(f'IDs: {jogadores_ids}')
     
     start_data = {
@@ -148,11 +242,22 @@ def _emit_start_game(client):
         'port': 18861,
         'players': jogadores_count
     }
-    message = json.dumps(start_data)
-    client.publish('game/start', message)
-    print(f'Emitindo game/start -> {jogadores_count} jogadores prontos')
+    
+    print(f'[DEBUG] Iniciando servidor RPC...')
     _start_rpc_server_in_thread(host=start_data['host'], port=start_data['port'])
     print(f'=== SERVIDOR RPC INICIADO ===')
+    
+    message = json.dumps(start_data)
+    print(f'[DEBUG] Publicando game/start: {message}')
+    client.publish('game/start', message)
+    print(f'Emitindo game/start -> {jogadores_count} jogadores prontos')
+    
+    # Resetar estado após iniciar o jogo
+    with _lock:
+        match_found = False
+        listaJogadoresAceitaram.clear()
+        jogadoresNaPartida.clear()
+        print(f'[DEBUG] Estado resetado após iniciar jogo')
 
 
 def on_connect(client, userdata, flags, rc):
@@ -162,6 +267,7 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe("game/init")
     client.subscribe("game/join")
     client.subscribe("game/left")
+    client.subscribe("game/accept")
 
 
 def on_message(client, userdata, msg):
@@ -174,6 +280,8 @@ def on_message(client, userdata, msg):
         _handle_join(payload)
     elif topic == 'game/left':
         _handle_left(payload)
+    elif topic == 'game/accept':
+        _handle_accept(payload)
     else:
         print('Tópico não tratado:', topic)
 

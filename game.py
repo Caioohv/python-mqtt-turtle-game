@@ -8,6 +8,10 @@ import rpyc
 import threading
 
 searching = False
+match_found = False
+accepted_count = 0
+total_players = 0
+player_accepted = False
 game_started = False
 mqtt_client = None
 player_id = None
@@ -29,6 +33,7 @@ BUTTON_TOP = 25
 
 BUTTON_TEXT_PROCURAR = "Procurar partida"
 BUTTON_TEXT_CANCELAR = "Cancelar busca"
+BUTTON_TEXT_ACEITAR = "Aceitar partida"
 
 
 def generate_player_data():
@@ -53,15 +58,55 @@ def on_mqtt_connect(client, userdata, flags, rc):
 	print(f"MQTT conectado com código {rc}")
 	if rc == 0:
 		client.subscribe("game/start")
-		print("Inscrito no tópico game/start")
+		client.subscribe("game/match_found")
+		client.subscribe("game/accept_update")
+		client.subscribe("game/match_cancelled")
+		print("Inscrito nos tópicos do jogo")
 
 
 def on_mqtt_message(client, userdata, msg):
+	global match_found, accepted_count, total_players, player_accepted
 	topic = msg.topic
 	payload = msg.payload.decode('utf-8')
 	print(f'MQTT mensagem recebida: {topic} -> {payload}')
 	
-	if topic == 'game/start':
+	if topic == 'game/match_found':
+		try:
+			data = json.loads(payload)
+			players_in_match = data.get('players_in_match', [])
+			
+			# Só mostrar "Aceitar partida" se este jogador está na partida
+			if player_id in players_in_match:
+				print("Partida encontrada! Aguardando aceitação...")
+				total_players = data.get('total_players', 3)
+				match_found = True
+				accepted_count = 0
+				player_accepted = False
+				draw_button(_button_pen)
+			else:
+				print(f"Partida encontrada, mas você não está nela (ID {player_id} não está em {players_in_match})")
+		except Exception as e:
+			print(f"Erro ao processar game/match_found: {e}")
+	
+	elif topic == 'game/accept_update':
+		print("Atualização de aceitações recebida")
+		try:
+			data = json.loads(payload)
+			accepted_count = data.get('accepted', 0)
+			total_players = data.get('total', 3)
+			draw_button(_button_pen)
+		except Exception as e:
+			print(f"Erro ao processar game/accept_update: {e}")
+	
+	elif topic == 'game/match_cancelled':
+		print("Partida cancelada!")
+		match_found = False
+		accepted_count = 0
+		total_players = 0
+		player_accepted = False
+		draw_button(_button_pen)
+	
+	elif topic == 'game/start':
 		print("Jogo iniciando! Conectando ao servidor RPC...")
 		try:
 			start_data = json.loads(payload)
@@ -107,12 +152,35 @@ def emit_left():
 		print(f'Enviando game/left: {message}')
 
 
+def emit_accept():
+	if mqtt_client and player_id:
+		message = json.dumps({'id': player_id})
+		mqtt_client.publish('game/accept', message)
+		print(f'Enviando game/accept: {message}')
+
+
 def draw_button(pen):
 	pen.clear()
 	pen.penup()
+	
+	# Determinar cor e texto do botão
+	if match_found:
+		if player_accepted:
+			fill_color = "#808080"  # Cinza quando já aceitou
+			text = "Aguardando..."
+		else:
+			fill_color = "#2196F3"  # Azul para aceitar
+			text = BUTTON_TEXT_ACEITAR
+	elif searching:
+		fill_color = "#f44336"  # Vermelho para cancelar
+		text = BUTTON_TEXT_CANCELAR
+	else:
+		fill_color = "#4CAF50"  # Verde para procurar
+		text = BUTTON_TEXT_PROCURAR
+	
+	# Desenhar botão
 	pen.goto(BUTTON_LEFT, BUTTON_BOTTOM)
 	pen.pendown()
-	fill_color = "#4CAF50" if not searching else "#f44336"
 	pen.fillcolor(fill_color)
 	pen.pencolor("black")
 	pen.begin_fill()
@@ -122,28 +190,45 @@ def draw_button(pen):
 		pen.forward(BUTTON_TOP - BUTTON_BOTTOM)
 		pen.left(90)
 	pen.end_fill()
+	
+	# Texto do botão
 	pen.penup()
 	pen.goto((BUTTON_LEFT + BUTTON_RIGHT) / 2, (BUTTON_BOTTOM + BUTTON_TOP) / 2 - 8)
 	pen.color("white")
-	text = BUTTON_TEXT_CANCELAR if searching else BUTTON_TEXT_PROCURAR
 	pen.write(text, align="center", font=("Arial", 14, "bold"))
+	
+	# Se partida encontrada, mostrar contador de aceitações
+	if match_found:
+		pen.goto(0, BUTTON_TOP + 30)
+		pen.color("black")
+		status_text = f"{accepted_count}/{total_players} jogadores aceitaram a partida"
+		pen.write(status_text, align="center", font=("Arial", 12, "normal"))
 
 
 def on_screen_click(x, y):
-	global searching
+	global searching, match_found, player_accepted
 	if game_started:
 		return
 		
 	if BUTTON_LEFT <= x <= BUTTON_RIGHT and BUTTON_BOTTOM <= y <= BUTTON_TOP:
-		searching = not searching
-		
-		if searching:
-			emit_join()
+		if match_found:
+			# Se partida encontrada e ainda não aceitou
+			if not player_accepted:
+				player_accepted = True
+				emit_accept()
+				draw_button(_button_pen)
+				print("Partida aceita!")
 		else:
-			emit_left()
+			# Toggle busca de partida
+			searching = not searching
 			
-		draw_button(_button_pen)
-		print("searching =", searching)
+			if searching:
+				emit_join()
+			else:
+				emit_left()
+				
+			draw_button(_button_pen)
+			print("searching =", searching)
 
 
 def setup_screen():
