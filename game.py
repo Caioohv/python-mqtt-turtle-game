@@ -246,10 +246,13 @@ def start_game(host, port):
 	global game_started, proxy, player_turtle, screen, posX, posY
 	
 	try:
+		print(f"[GAME] Aguardando servidor RPC ficar pronto...")
+		time.sleep(1.0)  # Aumentar tempo de espera
+		
 		proxy = rpyc.connect(host, port, config={'allow_public_attrs': True})
 		print(f"Conectado ao servidor RPC em {host}:{port}")
 		
-		time.sleep(0.5)
+		time.sleep(0.3)  # Pequena pausa adicional
 		
 		jogadores_list = proxy.root.exposed_obter_estado()
 		
@@ -257,12 +260,17 @@ def start_game(host, port):
 		for jogador in jogadores_list:
 			print(f"  Jogador {jogador['id']}: cor={jogador['color']}, pos=({jogador['x']}, {jogador['y']})")
 		
+		# Verificar se meu jogador está na lista
+		my_player_found = any(j['id'] == player_id for j in jogadores_list)
+		print(f"[GAME] Meu jogador (ID {player_id}) encontrado no servidor: {my_player_found}")
+		
 		game_started = True
 		
 		setup_game_screen()
 		
 		game_player_id = player_id
 		print(f"Usando ID do jogador: {game_player_id}")
+
 		
 		game_thread = threading.Thread(target=game_loop, args=(game_player_id,), daemon=True)
 		game_thread.start()
@@ -289,24 +297,28 @@ def setup_game_screen():
 		try:
 			jogadores_list = proxy.root.exposed_obter_estado()
 			
-			print(f"Estado atual do servidor: {len(jogadores_list)} jogadores")
+			print(f"[SETUP] Estado atual do servidor: {len(jogadores_list)} jogadores")
+			print(f"[SETUP] Procurando jogador com ID: {player_id}")
+			print(f"[SETUP] IDs disponíveis: {[j['id'] for j in jogadores_list]}")
 			
 			player_data = None
 			for jogador in jogadores_list:
+				print(f"[SETUP] Comparando {jogador['id']} == {player_id}: {jogador['id'] == player_id}")
 				if jogador['id'] == player_id:
 					player_data = jogador
 					posX = player_data['x']
 					posY = player_data['y']
-					print(f"Jogador {player_id} encontrado: pos({posX}, {posY}) cor({player_data['color']})")
+					print(f"✅ Jogador {player_id} encontrado: pos({posX}, {posY}) cor({player_data['color']})")
 					break
 			
 			if not player_data:
-				print(f"Jogador {player_id} NÃO encontrado no servidor")
+				print(f"❌ Jogador {player_id} NÃO encontrado no servidor")
+				print(f"[SETUP] Gerando novos dados para jogador {player_id}")
 				player_data = generate_player_data()
 				posX = player_data['x']
 				posY = player_data['y']
 		except Exception as e:
-			print(f"Erro ao acessar servidor: {e}")
+			print(f"❌ Erro ao acessar servidor: {e}")
 			import traceback
 			traceback.print_exc()
 			player_data = generate_player_data()
@@ -323,7 +335,7 @@ def setup_game_screen():
 	player_turtle.color(player_data['color'])
 	player_turtle.penup()
 	player_turtle.goto(posX, posY)
-	print(f"Turtle do jogador atual criada: ID {player_id}, cor {player_data['color']}")
+	print(f"🎮 Turtle do jogador atual criada: ID {player_id}, cor {player_data['color']}, pos({posX}, {posY})")
 	
 	setup_controls()
 

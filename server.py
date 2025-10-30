@@ -232,6 +232,13 @@ def _emit_start_game(client):
         # Usar apenas os jogadores que estão na partida
         jogadores_ids = list(jogadoresNaPartida)
         jogadores_count = len(jogadores_ids)
+        
+        # Criar cópia dos dados dos jogadores para enviar
+        jogadores_data = []
+        for pid in jogadores_ids:
+            if pid in listaJogadores:
+                jogadores_data.append(listaJogadores[pid])
+                print(f'[DEBUG] Jogador {pid} na partida: {listaJogadores[pid]}')
     
     print(f'=== INICIANDO JOGO ===')
     print(f'Jogadores na partida: {jogadores_count}')
@@ -240,24 +247,30 @@ def _emit_start_game(client):
     start_data = {
         'host': '127.0.0.1',
         'port': 18861,
-        'players': jogadores_count
+        'players': jogadores_count,
+        'players_data': jogadores_data  # Enviar dados dos jogadores também
     }
     
     print(f'[DEBUG] Iniciando servidor RPC...')
     _start_rpc_server_in_thread(host=start_data['host'], port=start_data['port'])
     print(f'=== SERVIDOR RPC INICIADO ===')
     
+    # Aguardar um pouco para garantir que o servidor RPC está pronto
+    import time
+    time.sleep(0.3)
+    
     message = json.dumps(start_data)
     print(f'[DEBUG] Publicando game/start: {message}')
     client.publish('game/start', message)
     print(f'Emitindo game/start -> {jogadores_count} jogadores prontos')
     
-    # Resetar estado após iniciar o jogo
+    # Resetar estado de matchmaking, mas manter jogadores no servidor RPC
     with _lock:
         match_found = False
         listaJogadoresAceitaram.clear()
         jogadoresNaPartida.clear()
-        print(f'[DEBUG] Estado resetado após iniciar jogo')
+        # NÃO limpar listaJogadores aqui - eles precisam estar no RPC
+        print(f'[DEBUG] Estado de matchmaking resetado')
 
 
 def on_connect(client, userdata, flags, rc):
